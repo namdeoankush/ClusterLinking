@@ -71,7 +71,6 @@ docker compose exec rightKafka \
 ```
 
 ## **6. Create Mirror Topics**
-
 ```sh
 #Mirror topic for data mirror from left -> right
 docker compose exec rightKafka \
@@ -89,9 +88,16 @@ docker compose exec leftKafka \
     --bootstrap-server leftKafka:19092
 ```
 
-## **7. Pause Cluster Link**
+## **7. Produce to source cluster**
 ```sh
-kafka-configs --bootstrap-server rightKafka:29092 --entity-type cluster-links --entity-name bidirectional-linkAB --alter --add-config cluster.link.paused=true
+docker compose exec leftKafka bash
+
+for x in {1..1000}; do echo $x; sleep 2; done | kafka-console-producer --bootstrap-server leftKafka:19092 --topic clicks
+
+docker compose exec rightKafka bash
+
+for x in {2000..3000}; do echo $x; sleep 2; done | kafka-console-producer --bootstrap-server rightKafka:29092 --topic clicks
+
 ```
 
 ## **8. Check Mirror Topics State in Cluster**
@@ -144,7 +150,6 @@ kafka-consumer-groups --bootstrap-server leftKafka:19092 --group disaster_test_g
 kafka-consumer-groups --bootstrap-server rightKafka:29092 --group disaster_test_group --describe --offsets
 ```
 
-
 ## **12. Promote Mirror Topic to Writable Topic (Graceful Shutdown)**
 ```sh
 kafka-mirrors --promote --topics left.clicks --bootstrap-server rightKafka:29092
@@ -153,6 +158,11 @@ kafka-mirrors --promote --topics left.clicks --bootstrap-server rightKafka:29092
 ## **13. Failover Mirror Topic to Writable Topic (Force Shutdown)**
 ```sh
 kafka-mirrors --failover -topics left.clicks --bootstrap-server rightKafka:29092
+```
+
+## **8. Pause Cluster Link**
+```sh
+kafka-configs --bootstrap-server rightKafka:29092 --entity-type cluster-links --entity-name bidirectional-linkAB --alter --add-config cluster.link.paused=true
 ```
 
 ## **14. delete the environment**
