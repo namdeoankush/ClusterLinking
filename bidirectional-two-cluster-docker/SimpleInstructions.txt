@@ -1,0 +1,105 @@
+
+
+docker compose exec leftKafka kafka-topics --bootstrap-server leftKafka:19092 --topic foe --create --partitions 1 --replication-factor 1
+
+docker compose exec rightKafka kafka-topics --bootstrap-server rightKafka:29092 --topic foe --create --partitions 1 --replication-factor 1
+
+docker compose exec leftKafka \
+    kafka-cluster-links --bootstrap-server leftKafka:19092  --link bidirectional-link --list
+
+docker compose exec rightKafka \
+    kafka-cluster-links --bootstrap-server rightKafka:29092 --link  bidirectional-link --list
+
+
+
+```shell
+docker compose exec rightKafka \
+    kafka-mirrors --create \
+    --source-topic foe \
+    --mirror-topic left.foe \
+    --link bidirectional-link \
+    --bootstrap-server rightKafka:29092        
+``` 
+
+```shell
+docker compose exec leftKafka \
+    kafka-mirrors --create \
+    --source-topic foe \
+    --mirror-topic right.foe \
+    --link bidirectional-link \
+    --bootstrap-server leftKafka:19092        
+``` 
+
+
+for x in {1..1000}; do echo $x; sleep 1; done | kafka-console-producer --bootap-server leftKafka:19092 --topic foe
+
+# can use the Tooling for this as well 
+
+even_number | kafka-console-producer --bootap-server leftKafka:19092 --topic foe
+
+for x in {2000..3000}; do echo $x; sleep 1; done | kafka-console-producer --bootap-server rightKafka:29092 --topic foe
+
+odd_number | kafka-console-producer --bootap-server rightKafka:29092 --topic foe
+
+
+kafka-console-consumer --bootstrap-server leftKafka:19092 \
+        --group left_foe_group \
+        --from-beginning \
+        --include ".*foe" \
+        --property print.timestamp=true \
+        --property print.offset=true \
+        --property print.partition=true \
+        --property print.headers=true \
+        --property print.key=true \
+        --property print.value=true
+
+
+
+        kafka-console-consumer --bootstrap-server rightKafka:29092 \
+        --group right_foe_group \
+        --from-beginning \
+        --include ".*foe" \
+        --property print.timestamp=true \
+        --property print.offset=true \
+        --property print.partition=true \
+        --property print.headers=true \
+        --property print.key=true \
+        --property print.value=true
+
+
+
+        disaster recover: 
+
+
+        kafka-console-consumer --bootstrap-server leftKafka:19092 \
+        --group disaster_foe_group \
+        --from-beginning \
+        --include ".*foe" \
+        --property print.timestamp=true \
+        --property print.offset=true \
+        --property print.partition=true \
+        --property print.headers=true \
+        --property print.key=true \
+        --property print.value=true
+
+        kafka-console-consumer --bootstrap-server rightKafka:29092 \
+        --group disaster_foe_group \
+        --from-beginning \
+        --include ".*foe" \
+        --property print.timestamp=true \
+        --property print.offset=true \
+        --property print.partition=true \
+        --property print.headers=true \
+        --property print.key=true \
+        --property print.value=true
+
+
+
+for x in {2..200}; do echo $x; sleep 2; done | kafka-console-producer --bootap-server rightKafka:29092 --topic number
+
+kafka-consumer-groups --bootstrap-server leftKafka:19092 --group left_foe_group --describe --offsets
+
+kafka-consumer-groups --bootstrap-server rightKafka:29092 --group right_foe_group --describe --offsets
+
+
+

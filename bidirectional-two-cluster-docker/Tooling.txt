@@ -1,0 +1,16 @@
+# create bash functions for producer help
+
+even_numbers() {
+    for num in $(seq 2 2 10000); do
+        echo $num;
+sleep 1;    
+done
+}
+
+
+odd_numbers() {
+    for num in $(seq 2 2 10000); do
+        echo $num;
+sleep 1;    
+done
+}
