@@ -34,7 +34,7 @@ docker compose exec rightKafka \
     --consumer-group-filters-json-file /home/appuser/cl-offset-groups.json
 ```
 
-### **Extra Step for Modifying Filters**
+### **Optional Extra Step for Modifying Filters**
 ```sh
 docker cp newFilters.properties rightKafka:/tmp/newFilters.properties
 docker exec rightKafka kafka-configs --bootstrap-server rightKafka:29092 --alter --cluster-link bidirectional-linkAB --add-config-file /tmp/newFilters.properties
@@ -101,17 +101,7 @@ docker compose exec leftKafka kafka-mirrors --describe --bootstrap-server leftKa
 docker compose exec rightKafka kafka-mirrors --describe --bootstrap-server rightKafka:29092 --links bidirectional-linkAB
 ```
 
-## **9. Promote Mirror Topic to Writable Topic (Graceful Shutdown)**
-```sh
-kafka-mirrors --promote --topics left.clicks --bootstrap-server rightKafka:29092
-```
-
-## **10. Failover Mirror Topic to Writable Topic (Force Shutdown)**
-```sh
-kafka-mirrors --failover -topics left.clicks --bootstrap-server rightKafka:29092
-```
-
-## **11. Consumer Offset Testing**
+## **9. Consumer Offset Testing**
 ```sh
 docker compose exec leftKafka \
     kafka-console-consumer --bootstrap-server leftKafka:19092 \
@@ -122,12 +112,8 @@ docker compose exec leftKafka \
     --formatter "kafka.coordinator.group.GroupMetadataManager$OffsetsMessageFormatter"
 ```
 
-## **12. Failover to Writable Topic**
-```sh
-kafka-mirrors --failover --topics
-```
-
-## **13. Disaster Recovery Testing**
+## **10. Disaster Recovery Testing**
+## Dont run the consumer simultenously, it will stop the offset mirroring.
 ```sh
 docker compose exec leftKafka \
 kafka-console-consumer --bootstrap-server leftKafka:19092 \
@@ -152,10 +138,25 @@ kafka-console-consumer --bootstrap-server rightKafka:29092 \
     --property print.value=true
 ```
 
-## **14. Offset Testing**
+## **11. Offset Testing**
 ```sh
 kafka-consumer-groups --bootstrap-server leftKafka:19092 --group disaster_test_group --describe --offsets
 kafka-consumer-groups --bootstrap-server rightKafka:29092 --group disaster_test_group --describe --offsets
-kafka-consumer-groups --bootstrap-server centerKafka:29092 --group disaster_test_group --describe --offsets
+```
+
+
+## **12. Promote Mirror Topic to Writable Topic (Graceful Shutdown)**
+```sh
+kafka-mirrors --promote --topics left.clicks --bootstrap-server rightKafka:29092
+```
+
+## **13. Failover Mirror Topic to Writable Topic (Force Shutdown)**
+```sh
+kafka-mirrors --failover -topics left.clicks --bootstrap-server rightKafka:29092
+```
+
+## **14. delete the environment**
+```sh
+docker compose down
 ```
 
