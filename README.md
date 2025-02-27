@@ -3,8 +3,8 @@
 
 ## Objective
 
-- Have two kafka cluster up and running.
-- set up a bidirectional cluster link between both of them.
+- Have multiple kafka cluster up and running.
+- set up a bidirectional cluster link between them.
 - mirror data from source to destination cluster.
 - do a failover of producer and consumers.
 - observer the behaviour
