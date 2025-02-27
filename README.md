@@ -1,3 +1,19 @@
+** CLUSTER LINKING **
+
+
+## Objective
+
+- Have two kafka cluster up and running.
+- set up a bidirectional cluster link between both of them.
+- mirror data from source to destination cluster.
+- do a failover of producer and consumers.
+- observer the behaviour
+
+> this repository is for testing purpose it is not
+> intended for production usage. It is a mimmicing of
+>  a cluster linking setup doesnt neccessary cover
+> all the production cases.
+
 # Kafka Cluster Linking (Left to Right & Right to Left)
 
 ## **1. Start the Clusters**
@@ -70,13 +86,22 @@ docker compose exec rightKafka \
 ```
 
 ## **6. Create Mirror Topics**
+
 ```sh
+#Mirror topic for data mirror from left -> right
 docker compose exec rightKafka \
     kafka-mirrors --create \
     --source-topic clicks \
     --mirror-topic left.clicks \
     --link bidirectional-linkAB \
     --bootstrap-server rightKafka:29092
+#Mirror topic for data mirror from right -> left
+docker compose exec leftKafka \
+    kafka-mirrors --create \
+    --source-topic clicks \
+    --mirror-topic right.clicks \
+    --link bidirectional-linkAB \
+    --bootstrap-server leftKafka:19092
 ```
 
 ## **7. Pause Cluster Link**
