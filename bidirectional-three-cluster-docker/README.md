@@ -1,42 +1,82 @@
-** CLUSTER LINKING **
+# Bi-directional cluster link: Active-Active
 
+This is just an adaptation of the original guide by Tomas Almeida: https://github.com/tomasalmeida/cluster-schema-linking-examples/tree/main/bidirectional-link 
 
-## Objective
+## Start the clusters
 
-- Have two kafka cluster up and running.
-- set up a bidirectional cluster link between both of them.
-- mirror data from source to destination cluster.
-- do a failover of producer and consumers.
-- observer the behaviour
+```shell
+    docker compose up -d
 
-> this repository is for testing purpose it is not
-> intended for production usage. It is a mimmicing of
->  a cluster linking setup doesnt neccessary cover
-> all the production cases.
+    docker compose logs -f
+``` 
 
-# Kafka Cluster Linking (Left to Right & Right to Left)
+Tail the logs expecting everything to start.
 
-## **1. Start the Clusters**
-```sh
-docker compose up -d
-docker compose logs -f
+Two CP clusters (ZK+Broker+SR+C3) are running:
+
+*  Left Control Center available at [http://localhost:19021](http://localhost:19021/)
+*  Right Control Center available at [http://localhost:29021](http://localhost:29021/)
+*  Center Control Center available at [http://localhost:39021](http://localhost:39021/)
+*  Left Schema Register available at [http://localhost:8085](http://localhost:8085/)
+*  Right Schema Register available at [http://localhost:8086](http://localhost:8086/)
+*  Center Schema Register available at [http://localhost:8087](http://localhost:8087/)
+
+## Create the topic `test` skipping the schema registry setup to keep it simple
+
+```shell
+#curl -v -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" --data @data/product.avsc http://localhost:8085/subjects/product-value/versions
+
+#curl -v -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" --data @data/product.avsc http://localhost:8086/subjects/product-value/versions  
+
+docker compose exec leftKafka kafka-topics --bootstrap-server leftKafka:19092 --topic test --create --partitions 1 --replication-factor 1
+
+docker compose exec centerKafka kafka-topics --bootstrap-server centerKafka:39092 --topic test --create --partitions 1 --replication-factor 1
+
+docker compose exec rightKafka kafka-topics --bootstrap-server rightKafka:29092 --topic test --create --partitions 1 --replication-factor 1
 ```
 
-## **2. Create Topics**
-```sh
-docker compose exec leftKafka kafka-topics --bootstrap-server leftKafka:19092 --topic clicks --create --partitions 1 --replication-factor 1
-docker compose exec rightKafka kafka-topics --bootstrap-server rightKafka:29092 --topic clicks --create --partitions 1 --replication-factor 1
+## Create the schema linking skipping the schema registry setup to keep it simple 
+
+### Create schema linking from left to right
+
+```shell
+#docker compose exec leftSchemaregistry bash -c '\
+    echo "schema.registry.url=http://rightSchemaregistry:8086" > /home/appuser/config.txt'
+    
+#docker compose exec leftSchemaregistry bash -c '\
+    schema-exporter --create --name left-to-right-sl --subjects "product-value" \
+    --config-file ~/config.txt \
+    --schema.registry.url http://leftSchemaregistry:8085 \
+    --subject-format "left.product-value" \
+    --context-type NONE'
 ```
 
-## **3. Create Cluster Linking (Left to Right)**
-```sh
+### Create schema linking from right to left
+
+```shell
+#docker compose exec rightSchemaregistry bash -c '\
+    echo "schema.registry.url=http://leftSchemaregistry:8085" > /home/appuser/config.txt'
+
+#docker compose exec rightSchemaregistry bash -c '\
+    schema-exporter --create --name right-to-left-sl --subjects "product-value" \
+    --config-file ~/config.txt \
+    --schema.registry.url http://rightSchemaregistry:8086 \
+    --subject-format "right.product-value" \
+    --context-type NONE'
+```
+
+## Create the cluster linking
+
+### Create cluster linking from left to right
+
+```shell
 docker compose exec rightKafka bash -c '\
 echo "\
-bootstrap.servers=leftKafka:19092\
-link.mode=BIDIRECTIONAL\
-cluster.link.prefix=left.\
-consumer.offset.sync.enable=true\
-consumer.offset.sync.ms=1000\
+bootstrap.servers=leftKafka:19092
+link.mode=BIDIRECTIONAL
+cluster.link.prefix=left.
+consumer.offset.sync.enable=true
+consumer.offset.sync.ms=1000
 " > /home/appuser/cl.properties'
 
 docker compose exec rightKafka bash -c '\
@@ -44,133 +84,354 @@ echo "{\"groupFilters\": [{\"name\": \"*\",\"patternType\": \"LITERAL\",\"filter
 
 docker compose exec rightKafka \
     kafka-cluster-links --bootstrap-server rightKafka:29092 \
+    --create --link bidirectional-linkAC \
+    --config-file /home/appuser/cl.properties \
+    --consumer-group-filters-json-file /home/appuser/cl-offset-groups.json
+```
+
+**# Create cluster linking from left to center**
+```shell
+docker compose exec centerKafka bash -c '\
+echo "\
+bootstrap.servers=leftKafka:19092
+link.mode=BIDIRECTIONAL
+cluster.link.prefix=left.
+consumer.offset.sync.enable=true
+consumer.offset.sync.ms=1000
+" > /home/appuser/cl.properties'
+
+docker compose exec centerKafka bash -c '\
+echo "{\"groupFilters\": [{\"name\": \"*\",\"patternType\": \"LITERAL\",\"filterType\": \"INCLUDE\"}]}" > /home/appuser/cl-offset-groups.json'
+
+docker compose exec centerKafka \
+    kafka-cluster-links --bootstrap-server centerKafka:39092 \
     --create --link bidirectional-linkAB \
     --config-file /home/appuser/cl.properties \
     --consumer-group-filters-json-file /home/appuser/cl-offset-groups.json
 ```
 
-### **Extra Step for Modifying Filters**
-```sh
-docker cp newFilters.properties rightKafka:/tmp/newFilters.properties
-docker exec rightKafka kafka-configs --bootstrap-server rightKafka:29092 --alter --cluster-link bidirectional-linkAB --add-config-file /tmp/newFilters.properties
-```
-
-## **4. Create Cluster Linking (Right to Left)**
-```sh
+**# Create cluster linking from right to left**
+```shell
 docker compose exec leftKafka bash -c '\
 echo "\
-bootstrap.servers=rightKafka:29092\
-link.mode=BIDIRECTIONAL\
-cluster.link.prefix=right.\
-consumer.offset.sync.enable=true\
-consumer.offset.sync.ms=1000\
+bootstrap.servers=rightKafka:29092
+link.mode=BIDIRECTIONAL
+cluster.link.prefix=right.
+consumer.offset.sync.enable=true
+consumer.offset.sync.ms=1000
 " > /home/appuser/cl1.properties'
-
 docker compose exec leftKafka bash -c '\
 echo "{\"groupFilters\": [{\"name\": \"*\",\"patternType\": \"LITERAL\",\"filterType\": \"INCLUDE\"}]}" > /home/appuser/cl1-offset-groups.json'
-
 docker compose exec leftKafka \
     kafka-cluster-links --bootstrap-server leftKafka:19092 \
-    --create --link bidirectional-linkAB \
+    --create --link bidirectional-linkAC \
     --config-file /home/appuser/cl1.properties \
     --consumer-group-filters-json-file /home/appuser/cl1-offset-groups.json
 ```
 
-## **5. Check for Cluster Links**
-```sh
-docker compose exec leftKafka \
-    kafka-cluster-links --bootstrap-server leftKafka:19092 --list
+**# Create cluster linking from center to left**
+```shell
+docker compose exec leftKafka bash -c '\
+echo "\
+bootstrap.servers=centerKafka:39092
+link.mode=BIDIRECTIONAL
+cluster.link.prefix=center.
+consumer.offset.sync.enable=true
+consumer.offset.sync.ms=1000
+" > /home/appuser/cl2.properties'
 
+docker compose exec leftKafka bash -c '\
+echo "{\"groupFilters\": [{\"name\": \"*\",\"patternType\": \"LITERAL\",\"filterType\": \"INCLUDE\"}]}" > /home/appuser/cl2-offset-groups.json'
+
+docker compose exec leftKafka \
+    kafka-cluster-links --bootstrap-server leftKafka:19092 \
+    --create --link bidirectional-linkAB \
+    --config-file /home/appuser/cl2.properties \
+    --consumer-group-filters-json-file /home/appuser/cl2-offset-groups.json
+```shell
+
+**check for link**
+
+docker compose exec leftKafka \
+ kafka-cluster-links --bootstrap-server leftKafka:19092  --list
 docker compose exec rightKafka \
     kafka-cluster-links --bootstrap-server rightKafka:29092 --list
-```
+docker compose exec centerKafka \
+    kafka-cluster-links --bootstrap-server centerKafka:39092 --list
 
-## **6. Create Mirror Topics**
 
-```sh
-#Mirror topic for data mirror from left -> right
+docker compose exec leftKafka \
+ kafka-cluster-links --bootstrap-server leftKafka:19092  --list
+docker compose exec rightKafka \
+    kafka-cluster-links --bootstrap-server rightKafka:29092 --list
+docker compose exec centerKafka \
+    kafka-cluster-links --bootstrap-server centerKafka:39092 --list
+
+
+Create the mirror topic
+
+```shell
 docker compose exec rightKafka \
     kafka-mirrors --create \
-    --source-topic clicks \
-    --mirror-topic left.clicks \
-    --link bidirectional-linkAB \
-    --bootstrap-server rightKafka:29092
-#Mirror topic for data mirror from right -> left
+    --source-topic product \
+    --mirror-topic left.product \
+    --link bidirectional-link \
+    --bootstrap-server rightKafka:29092        
+``` 
+
+```shell
+docker compose exec rightKafka \
+    kafka-mirrors --create \
+    --source-topic number \
+    --mirror-topic left.number \
+    --link bidirectional-link \
+    --bootstrap-server rightKafka:29092 
+```
+### Create cluster linking from right to left
+
+```shell
+docker compose exec leftKafka bash -c '\
+echo "\
+bootstrap.servers=rightKafka:29092
+link.mode=BIDIRECTIONAL
+cluster.link.prefix=right.
+consumer.offset.sync.enable=true
+" > /home/appuser/cl2.properties'
+
+docker compose exec leftKafka bash -c '\
+echo "{\"groupFilters\": [{\"name\": \"*\",\"patternType\": \"LITERAL\",\"filterType\": \"INCLUDE\"}]}" > /home/appuser/cl2-offset-groups.json'
+
+docker compose exec leftKafka \
+    kafka-cluster-links --bootstrap-server leftKafka:19092 \
+    --create --link bidirectional-link \
+    --config-file /home/appuser/cl2.properties \
+    --consumer-group-filters-json-file /home/appuser/cl2-offset-groups.json
+``` 
+
+Create the mirror topic
+
+```shell
 docker compose exec leftKafka \
     kafka-mirrors --create \
-    --source-topic clicks \
-    --mirror-topic right.clicks \
-    --link bidirectional-linkAB \
+    --source-topic product \
+    --mirror-topic right.product \
+    --link bidirectional-link \
     --bootstrap-server leftKafka:19092
-```
+``` 
 
-## **7. Pause Cluster Link**
-```sh
-kafka-configs --bootstrap-server rightKafka:29092 --entity-type cluster-links --entity-name bidirectional-linkAB --alter --add-config cluster.link.paused=true
-```
-
-## **8. Check Mirror Topics State in Cluster**
-```sh
-docker compose exec leftKafka kafka-mirrors --describe --bootstrap-server leftKafka:19092 --links bidirectional-linkAB
-
-docker compose exec rightKafka kafka-mirrors --describe --bootstrap-server rightKafka:29092 --links bidirectional-linkAB
-```
-
-## **9. Promote Mirror Topic to Writable Topic (Graceful Shutdown)**
-```sh
-kafka-mirrors --promote --topics left.clicks --bootstrap-server rightKafka:29092
-```
-
-## **10. Failover Mirror Topic to Writable Topic (Force Shutdown)**
-```sh
-kafka-mirrors --failover -topics left.clicks --bootstrap-server rightKafka:29092
-```
-
-## **11. Consumer Offset Testing**
-```sh
+```shell
 docker compose exec leftKafka \
-    kafka-console-consumer --bootstrap-server leftKafka:19092 \
-    --from-beginning \
-    --group disaster_test_group \
-    --property print.value=true \
-    --topic __consumer_offsets \
-    --formatter "kafka.coordinator.group.GroupMetadataManager$OffsetsMessageFormatter"
-```
+    kafka-mirrors --create \
+    --source-topic number \
+    --mirror-topic right.number \
+    --link bidirectional-link \
+    --bootstrap-server leftKafka:19092
+``` 
 
-## **12. Failover to Writable Topic**
-```sh
-kafka-mirrors --failover --topics
-```
+//get this working:
+seq 1 1000000 | onlyOdds    kafka-console-producer --topic number --bootstrap-server leftkafka:19092 --producer.config
 
-## **13. Disaster Recovery Testing**
-```sh
-docker compose exec leftKafka \
-kafka-console-consumer --bootstrap-server leftKafka:19092 \
-    --group disaster_test_group \
-    --include ".*test" \
-    --property print.timestamp=true \
-    --property print.offset=true \
-    --property print.partition=true \
-    --property print.headers=true \
-    --property print.key=true \
-    --property print.value=true
 
+## Checking the link is the same
+
+```shell
+ docker compose exec leftKafka \
+    kafka-cluster-links --bootstrap-server leftKafka:19092  --link bidirectional-link --list
 docker compose exec rightKafka \
-kafka-console-consumer --bootstrap-server rightKafka:29092 \
-    --group disaster_test_group \
-    --include ".*test" \
-    --property print.timestamp=true \
-    --property print.offset=true \
-    --property print.partition=true \
-    --property print.headers=true \
-    --property print.key=true \
-    --property print.value=true
+    kafka-cluster-links --bootstrap-server rightKafka:29092 --link  bidirectional-link --list
 ```
 
-## **14. Offset Testing**
-```sh
-kafka-consumer-groups --bootstrap-server leftKafka:19092 --group disaster_test_group --describe --offsets
-kafka-consumer-groups --bootstrap-server rightKafka:29092 --group disaster_test_group --describe --offsets
-kafka-consumer-groups --bootstrap-server centerKafka:29092 --group disaster_test_group --describe --offsets
+Verifying the results:
+
+- **Link name:** 'bidirectional-link' -> same name for both results, when the links were created, the same name was given to them
+- **link ID:** same id in both links
+- **remote cluster ID and local cluster ID:** are shown in a crossed way
+
+## Test time!
+
+### Active-active
+
+
+producing to number topic in simple way 
+left cluster:
+ docker compose exec leftKafka bash
+ [appuser@leftKafka ~]$ kafka-console-producer --bootstrap-server leftKafka:19092 --topic number
+
+Consuming
+
+kafka-console-consumer --bootstrap-server leftKafka:19092 \
+        --group left-group \
+        --from-beginning \
+        --include ".*number" \
+        --property print.timestamp=true \
+        --property print.offset=true \
+        --property print.partition=true \
+        --property print.headers=true \
+        --property print.key=true \
+        --property print.value=true
+
+right cluster:
+docker compose exec rightKafka bash
+kafka-console-producer --bootstrap-server rightKafka:29092 --topic number
+
+1. Producer produces to left cluster **(top left terminal)**
+
+```shell
+docker compose exec leftSchemaregistry kafka-avro-console-producer \
+    --bootstrap-server leftKafka:19092 \
+    --topic product \
+    --property value.schema.id=1 \
+    --property schema.registry.url=http://leftSchemaregistry:8085 \
+    --property auto.register=false \
+    --property use.latest.version=true
 ```
 
+Enter the messages to be produced:
+
+```
+    { "product_id": 1, "product_name" : "riceLeft"} 
+    { "product_id": 2, "product_name" : "beansLeft"} 
+```
+
+
+2. Consumer consumes from left cluster **(bottom left terminal)**
+
+```shell
+docker compose exec leftSchemaregistry \
+        kafka-avro-console-consumer --bootstrap-server leftKafka:19092 \
+        --property schema.registry.url=http://leftSchemaregistry:8085 \
+        --group left-group \
+        --from-beginning \
+        --include ".*product" \
+        --property print.timestamp=true \
+        --property print.offset=true \
+        --property print.partition=true \
+        --property print.headers=true \
+        --property print.key=true \
+        --property print.value=true
+```
+
+
+3. Producer produces to right cluster **(top right terminal)** 
+```shell
+docker compose exec rightSchemaregistry kafka-avro-console-producer \
+    --bootstrap-server rightKafka:29092 \
+    --topic product \
+    --property value.schema.id=1 \
+    --property schema.registry.url=http://rightSchemaregistry:8086 \
+    --property auto.register=false \
+    --property use.latest.version=true
+```
+
+Enter the messages to be produced:
+
+```
+ { "product_id": 3, "product_name" : "riceRight"} 
+ { "product_id": 4, "product_name" : "beansRight"} 
+
+    { "product_id": 1, "product_name" : "riceRight"} 
+    { "product_id": 2, "product_name" : "beansRight"} 
+```
+
+
+4. Consumer consumes from right cluster **(bottom right terminal)**
+
+```shell
+docker compose exec rightSchemaregistry \
+        kafka-avro-console-consumer --bootstrap-server rightKafka:29092 \
+        --property schema.registry.url=http://rightSchemaregistry:8086 \
+        --group right-group \
+        --from-beginning \
+        --include ".*product" \
+        --property print.timestamp=true \
+        --property print.offset=true \
+        --property print.partition=true \
+        --property print.headers=true \
+        --property print.key=true \
+        --property print.value=true
+```
+
+```shell
+kafka-console-consumer --bootstrap-server leftKafka:19092 --group left_group --include ".*number"
+``````
+
+### Disaster Mode
+
+Now run consumers with same group id: **(just two side by side terminals)** 
+
+```shell
+docker compose exec leftSchemaregistry \
+        kafka-avro-console-consumer --bootstrap-server leftKafka:19092 \
+        --property schema.registry.url=http://leftSchemaregistry:8085 \
+        --group disaster-group \
+        --from-beginning \
+        --include ".*product" \
+        --property print.timestamp=true \
+        --property print.offset=true \
+        --property print.partition=true \
+        --property print.headers=true \
+        --property print.key=true \
+        --property print.value=true
+```
+
+```shell
+docker compose exec rightSchemaregistry \
+        kafka-avro-console-consumer --bootstrap-server rightKafka:29092 \
+        --property schema.registry.url=http://rightSchemaregistry:8086 \
+        --group disaster-group \
+        --from-beginning \
+        --include ".*product" \
+        --property print.timestamp=true \
+        --property print.offset=true \
+        --property print.partition=true \
+        --property print.headers=true \
+        --property print.key=true \
+        --property print.value=true
+```
+
+What do you notice?
+
+Count with at least once: Expect duplicates! (offsets are not sync'ed fast enough)
+
+But if you close the right consumer and produce to it:
+
+```shell
+docker compose exec rightSchemaregistry kafka-avro-console-producer \
+    --bootstrap-server rightKafka:29092 \
+    --topic product \
+    --property value.schema.id=1 \
+    --property schema.registry.url=http://rightSchemaregistry:8086 \
+    --property auto.register=false \
+    --property use.latest.version=true
+```
+
+Entering:
+
+```
+{"product_id":3,"product_name":"tomato"}
+```
+
+You should see it on left consumer. Now close the left consumer and open the right consumer again:
+
+```shell
+docker compose exec rightSchemaregistry \
+        kafka-avro-console-consumer --bootstrap-server rightKafka:29092 \
+        --property schema.registry.url=http://rightSchemaregistry:8086 \
+        --group disaster-group \
+        --from-beginning \
+        --include ".*product" \
+        --property print.timestamp=true \
+        --property print.offset=true \
+        --property print.partition=true \
+        --property print.headers=true \
+        --property print.key=true \
+        --property print.value=true
+```
+
+You shouldn't see anything. There was time for offsets to synch.
+
+## Clean Up
+
+```shell
+docker compose down -v
+```
