@@ -1,5 +1,5 @@
 ** CLUSTER LINKING **
-
+![cluster linking](extras/cluster-link-migrate-cp.png)
 
 ## Objective
 
